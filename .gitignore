@@ -1,0 +1,24 @@
+# Next.js build
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Deploy artifacts
+deploy_bundle/
+deploy_final/
+frontend_deploy/
+frontend_runtime/
+*.tar.gz
+
+# Env
+.env*
+.env.local
+
+# Data / documents
+*.xlsx
+*.pdf
+
+# OS
+.DS_Store
