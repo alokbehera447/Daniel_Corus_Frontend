@@ -1109,7 +1109,7 @@ const MainNotification = () => {
                     </div>
 
                     {/* DASHBOARD LINK */}
-                    <button
+                    {/* <button
                       onClick={() => (window.location.href = "/")}
                       className="w-full px-4 py-3.5 text-left text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors font-medium flex items-center gap-3 border-b border-gray-100/50"
                     >
@@ -1132,7 +1132,7 @@ const MainNotification = () => {
                           Return to main optimization
                         </p>
                       </div>
-                    </button>
+                    </button> */}
 
                     {/* LOGOUT BUTTON */}
                     <button
@@ -1232,7 +1232,7 @@ const MainNotification = () => {
                     </button>
 
                     {/* DASHBOARD LINK */}
-                    <button
+                    {/* <button
                       onClick={() => {
                         window.location.href = "/";
                         setIsUserDropdownOpen(false);
@@ -1262,7 +1262,7 @@ const MainNotification = () => {
                           Run new optimizations
                         </p>
                       </div>
-                    </button>
+                    </button> */}
 
                     {/* LOGOUT BUTTON */}
                     <button
