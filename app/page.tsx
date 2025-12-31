@@ -3,6 +3,24 @@
 import React, { useState, useRef, useEffect } from "react";
 import { API_URL } from "@/lib/config";
 
+
+export const getAccessToken = () =>
+  localStorage.getItem("accessToken");
+
+export const getRefreshToken = () =>
+  localStorage.getItem("refreshToken");
+
+export const setTokens = (access: string, refresh?: string) => {
+  localStorage.setItem("accessToken", access);
+  if (refresh) localStorage.setItem("refreshToken", refresh);
+};
+
+export const clearTokens = () => {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("username");
+};
+
 export default function Home() {
   // ==========================
   // AUTHENTICATION STATE
@@ -72,6 +90,15 @@ export default function Home() {
   const [visualizationRequestLock, setVisualizationRequestLock] =
     useState(false);
 
+  // Notification state - moved up to be available for auth functions
+  const [mainNotification, setMainNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+  // Notification function - moved up to be available for auth functions
+  const showMainNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setMainNotification({ message, type });
+    setTimeout(() => setMainNotification(null), 3000);
+  };
+
   // ==========================
   // JWT AUTHENTICATION FUNCTIONS (unchanged)
   // ==========================
@@ -132,82 +159,158 @@ export default function Home() {
     }
   };
 
-  const refreshAccessToken = async () => {
+  
+
+const refreshAccessToken = async (): Promise<string | null> => {
+  const refresh = getRefreshToken();
+  if (!refresh) return null;
+
+  try {
+    const response = await fetch(`${API_URL}/auth/refresh/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    setTokens(data.access);
+    setAccessToken(data.access);
+    return data.access;
+  } catch {
+    return null;
+  }
+};
+
+
+const handleLogout = () => {
+  clearTokens();
+
+  setIsLoggedIn(false);
+  setShowLogin(true);
+  setAccessToken("");
+  setRefreshToken("");
+  setUsername("");
+  setUserInitial("");
+
+  showMainNotification("Session expired. Please login again.", "error");
+};
+
+
+  // Helper function to decode JWT and check expiration
+  const isTokenExpired = (token: string): boolean => {
     try {
-      const refresh = localStorage.getItem("refreshToken");
-      if (!refresh) {
-        throw new Error("No refresh token available");
-      }
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const exp = payload.exp * 1000; // Convert to milliseconds
+      return Date.now() >= exp;
+    } catch {
+      return true;
+    }
+  };
 
-      const response = await fetch(`${API_URL}/auth/refresh/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          refresh: refresh,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Token refresh failed");
-      }
-
-      const data = await response.json();
-      const newAccessToken = data.access;
-
-      // Update tokens
-      setAccessToken(newAccessToken);
-      localStorage.setItem("accessToken", newAccessToken);
-
-      return newAccessToken;
-    } catch (error) {
-      console.error("Token refresh error:", error);
-      handleLogout();
+  // Get token expiration time in milliseconds
+  const getTokenExpTime = (token: string): number | null => {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.exp * 1000;
+    } catch {
       return null;
     }
   };
 
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setShowLogin(true);
-    setUsername("");
-    setPassword("");
-    setUserInitial("");
-    setAccessToken("");
-    setRefreshToken("");
-    setIsUserDropdownOpen(false);
-
-    localStorage.removeItem("isLoggedIn");
-    localStorage.removeItem("userInitial");
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-    localStorage.removeItem("username");
-  };
-
   // Check for existing login on component mount
   useEffect(() => {
-    const loggedIn = localStorage.getItem("isLoggedIn");
-    const initial = localStorage.getItem("userInitial");
-    const storedAccessToken = localStorage.getItem("accessToken");
-    const storedRefreshToken = localStorage.getItem("refreshToken");
+    const access = getAccessToken();
+    const refresh = getRefreshToken();
     const storedUsername = localStorage.getItem("username");
 
-    if (
-      loggedIn === "true" &&
-      initial &&
-      storedAccessToken &&
-      storedRefreshToken &&
-      storedUsername
-    ) {
-      setIsLoggedIn(true);
-      setShowLogin(false);
-      setUserInitial(initial);
-      setAccessToken(storedAccessToken);
-      setRefreshToken(storedRefreshToken);
-      setUsername(storedUsername);
+    if (access && refresh) {
+      // Check if access token is expired
+      if (isTokenExpired(access)) {
+        // Try to refresh
+        refreshAccessToken().then((newToken) => {
+          if (newToken) {
+            setAccessToken(newToken);
+            setRefreshToken(refresh);
+            setIsLoggedIn(true);
+            setShowLogin(false);
+            if (storedUsername) {
+              setUsername(storedUsername);
+              setUserInitial(storedUsername.charAt(0).toUpperCase());
+            }
+          } else {
+            // Refresh failed, logout
+            clearTokens();
+            setIsLoggedIn(false);
+            setShowLogin(true);
+            setAccessToken("");
+            setRefreshToken("");
+            setUsername("");
+            setUserInitial("");
+          }
+        });
+      } else {
+        setAccessToken(access);
+        setRefreshToken(refresh);
+        setIsLoggedIn(true);
+        setShowLogin(false);
+        if (storedUsername) {
+          setUsername(storedUsername);
+          setUserInitial(storedUsername.charAt(0).toUpperCase());
+        }
+      }
+    } else {
+      clearTokens();
+      setIsLoggedIn(false);
+      setShowLogin(true);
     }
   }, []);
+
+  // Set up automatic token refresh before expiration
+  useEffect(() => {
+    if (!accessToken || !isLoggedIn) return;
+
+    const expTime = getTokenExpTime(accessToken);
+    if (!expTime) return;
+
+    // Refresh 5 minutes before expiration
+    const refreshTime = expTime - Date.now() - (5 * 60 * 1000);
+    
+    if (refreshTime <= 0) {
+      // Token is about to expire or already expired, refresh now
+      refreshAccessToken().then((newToken) => {
+        if (!newToken) {
+          clearTokens();
+          setIsLoggedIn(false);
+          setShowLogin(true);
+          setAccessToken("");
+          setRefreshToken("");
+          setUsername("");
+          setUserInitial("");
+          showMainNotification("Session expired. Please login again.", "error");
+        }
+      });
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      refreshAccessToken().then((newToken) => {
+        if (!newToken) {
+          clearTokens();
+          setIsLoggedIn(false);
+          setShowLogin(true);
+          setAccessToken("");
+          setRefreshToken("");
+          setUsername("");
+          setUserInitial("");
+          showMainNotification("Session expired. Please login again.", "error");
+        }
+      });
+    }, refreshTime);
+
+    return () => clearTimeout(timeoutId);
+  }, [accessToken, isLoggedIn]);
 
   // ==========================
   // AUTHENTICATED API REQUEST FUNCTION
@@ -216,20 +319,11 @@ const makeAuthenticatedRequest = async (
   url: string,
   options: RequestInit = {}
 ) => {
-  let token = accessToken;
+  let token = getAccessToken();
 
-  if (!token) {
-    const storedToken = localStorage.getItem("accessToken");
-    if (storedToken) {
-      token = storedToken;
-      setAccessToken(storedToken);
-    } else {
-      showMainNotification("Please login again", "error");
-      setTimeout(() => {
-        handleLogout();
-      }, 1000);
-      throw new Error("No authentication token available");
-    }
+ if (!token) {
+    handleLogout();
+    throw new Error("Not authenticated");
   }
 
   const headers = new Headers(options.headers);
@@ -467,14 +561,15 @@ const makeAuthenticatedRequest = async (
         body: formData,
       });
 
+      const result = await response.json();
+
       if (!response.ok) {
         if (response.status === 401) {
           throw new Error("Authentication required. Please login again.");
         }
-        throw new Error(`Upload failed: ${response.statusText}`);
+        // Display the specific error message from the API response
+        throw new Error(result.error || `Upload failed: ${response.statusText}`);
       }
-
-      const result = await response.json();
 
       if (result.success && result.data) {
         setBlockData(result.data);
@@ -581,15 +676,6 @@ const makeAuthenticatedRequest = async (
 const [fileName, setFileName] = useState<string>("");
 const [bufferSpacing, setBufferSpacing] = useState<number>(2.0);
 const [selectedParentBlocks, setSelectedParentBlocks] = useState<string[]>([]);
-
-// Add notification state
-const [mainNotification, setMainNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
-
-// Add this function to show notifications in main page
-const showMainNotification = (message: string, type: 'success' | 'error' = 'success') => {
-  setMainNotification({ message, type });
-  setTimeout(() => setMainNotification(null), 3000);
-};
 
 // Add this useEffect to handle loading optimization from history
 useEffect(() => {
@@ -1327,9 +1413,9 @@ const MainNotification = () => {
 
             <button
               onClick={triggerFileInput}
-              className="w-full p-6 border-2 border-dashed border-gray-300 bg-white/50 rounded-xl shadow-sm hover:border-blue-300 hover:bg-blue-50/50 transition-all duration-300 backdrop-blur-sm text-center group"
+              className="w-full p-6 border-2 border-dashed border-gray-300 bg-white/50 rounded-xl shadow-sm hover:border-blue-300 hover:bg-blue-50/50 transition-all duration-300 backdrop-blur-sm text-center group cursor-pointer"
             >
-              <div className="flex flex-col items-center gap-3">
+              <div className="flex flex-col items-center gap-3 ">
                 <div className="w-12 h-12 bg-linear-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
                   <svg
                     className="w-6 h-6 text-white"
@@ -1362,6 +1448,29 @@ const MainNotification = () => {
                 )}
               </div>
             </button>
+
+            {/* File Upload Error Message - Always show when there's an error */}
+            {error && (
+              <div className="mt-3 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+                <div className="flex-shrink-0">
+                  <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-red-800">Upload Failed</h4>
+                  <p className="text-sm text-red-700 mt-1">{error}</p>
+                </div>
+                <button
+                  onClick={() => setError(null)}
+                  className="flex-shrink-0 text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            )}
 
             {/* File requirements info */}
             {blockData.length === 0 && (
@@ -1650,7 +1759,7 @@ const MainNotification = () => {
               </h3>
               <button
                 onClick={() => setShowCustomParentForm(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-linear-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all duration-300 text-sm font-medium"
+                className="flex items-center gap-2 px-4 py-2 bg-linear-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all duration-300 text-sm font-medium cursor-pointer shadow hover:scale-105 active:scale-95"
               >
                 <svg
                   className="w-4 h-4"
